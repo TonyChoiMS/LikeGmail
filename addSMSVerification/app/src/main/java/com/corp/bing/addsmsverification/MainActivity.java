@@ -2,6 +2,7 @@ package com.corp.bing.addsmsverification;
 
 import android.app.SearchManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.TypedArray;
 import android.database.Cursor;
 import android.database.MatrixCursor;
@@ -9,11 +10,16 @@ import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.BaseColumns;
+import android.support.annotation.NonNull;
 import android.support.design.widget.CoordinatorLayout;
 import android.support.design.widget.FloatingActionButton;
+import android.support.design.widget.NavigationView;
 import android.support.design.widget.Snackbar;
-import android.support.v4.widget.SimpleCursorAdapter;
+import android.support.v4.view.GravityCompat;
+import android.support.v4.widget.CursorAdapter;
+import android.support.v4.widget.DrawerLayout;
 import android.support.v4.widget.SwipeRefreshLayout;
+import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.view.ActionMode;
 import android.support.v7.widget.DefaultItemAnimator;
@@ -23,9 +29,12 @@ import android.support.v7.widget.SearchView;
 import android.support.v7.widget.Toolbar;
 import android.support.v7.widget.helper.ItemTouchHelper;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -38,7 +47,8 @@ import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
 
-public class MainActivity extends AppCompatActivity implements SwipeRefreshLayout.OnRefreshListener, MessagesAdapter.MessageAdapterListener, RecyclerItemTouchHelper.RecyclerItemTouchHelperListener {
+public class MainActivity extends AppCompatActivity implements SwipeRefreshLayout.OnRefreshListener, MessagesAdapter.MessageAdapterListener, RecyclerItemTouchHelper.RecyclerItemTouchHelperListener, NavigationView.OnNavigationItemSelectedListener {
+
     private List<Message> messages = new ArrayList<>();
     private MessagesAdapter mAdapter;
     private ActionModeCallback actionModeCallback;
@@ -55,6 +65,10 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
     FloatingActionButton fab;
     @BindView(R.id.swipe_refresh_layout)
     SwipeRefreshLayout swipeRefreshLayout;
+    @BindView(R.id.drawer_layout)
+    DrawerLayout drawer;
+    @BindView(R.id.nav_view)
+    NavigationView navigationView;
     Unbinder unbinder;
 
     @Override
@@ -64,6 +78,14 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
         unbinder = ButterKnife.bind(this);
         setSupportActionBar(toolbar);
 
+        //DrawerLayout
+        ActionBarDrawerToggle toggle = new ActionBarDrawerToggle(
+                MainActivity.this, drawer, toolbar, R.string.navigation_drawer_open, R.string.navigation_drawer_close);
+        drawer.addDrawerListener(toggle);
+        toggle.syncState();
+        navigationView.setNavigationItemSelectedListener(this);
+
+        //Floating action button
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -170,35 +192,16 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
     void SearchViewSetting(Menu menu) {
 
         // Associate searchable configuration with the SearchView
-        SearchManager searchManager = (SearchManager) getSystemService(Context.SEARCH_SERVICE);
-        searchView = (SearchView) menu.findItem(R.id.action_search).getActionView();
-//        searchView.setSearchableInfo(searchManager.getSearchableInfo(getComponentName()));
+        SearchManager searchManager = (SearchManager) MainActivity.this.getSystemService(Context.SEARCH_SERVICE);
+
+        MenuItem menuItem = menu.findItem(R.id.action_search);
+        searchView = (SearchView) menuItem.getActionView();
+        searchView.setSearchableInfo(searchManager.getSearchableInfo(MainActivity.this.getComponentName()));
         searchView.setMaxWidth(Integer.MAX_VALUE);
-        searchView.setSuggestionsAdapter(new SimpleCursorAdapter(
-                this, android.R.layout.simple_expandable_list_item_1, null,
-                new String[]{SearchManager.SUGGEST_COLUMN_TEXT_1},
-                new int[]{android.R.id.text1}
-        ));
-        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-            @Override
-            public boolean onQueryTextSubmit(String query) {
-                Toast.makeText(MainActivity.this, "submit", Toast.LENGTH_SHORT).show();
-                return true;
-            }
 
-            @Override
-            public boolean onQueryTextChange(String query) {
-                Log.i("query", "query length : " + query.length());
-                if (query.length() >= 2) {
-                    new FetchSearchTermSuggestionsTask().execute(query);
-                } else {
-                    searchView.getSuggestionsAdapter().changeCursor(null);
-                }
-                return true;
-            }
-        });
-
-        // Listening to Search query text change
+        searchView.setSuggestionsAdapter(new AutoCompleteAdapter(
+                MainActivity.this,
+                null));
         searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
             public boolean onQueryTextSubmit(String query) {
@@ -207,9 +210,15 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
             }
 
             @Override
-            public boolean onQueryTextChange(String newText) {
-                mAdapter.getFilter().filter(newText);
-                return false;
+            public boolean onQueryTextChange(String query) {
+                Log.i("query", "query length : " + query.length());
+                if (query.length() >= 2) {
+                    new FetchSearchTermSuggestionsTask().execute(query);
+                    mAdapter.getFilter().filter(query);
+                } else {
+                    searchView.getSuggestionsAdapter().changeCursor(null);
+                }
+                return true;
             }
         });
 
@@ -217,16 +226,16 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
         searchView.setOnSuggestionListener(new SearchView.OnSuggestionListener() {
             @Override
             public boolean onSuggestionSelect(int position) {
-                Cursor cursor = (Cursor) searchView.getSuggestionsAdapter().getItem(position);
-                String term = cursor.getString(cursor.getColumnIndex(SearchManager.SUGGEST_COLUMN_TEXT_1));
-                cursor.close();
-
                 return true;
             }
 
             @Override
             public boolean onSuggestionClick(int position) {
-                return onSuggestionSelect(position);
+                CursorAdapter cursorAdapter = searchView.getSuggestionsAdapter();
+                Cursor cursor = cursorAdapter.getCursor();
+                cursor.moveToPosition(position);
+                searchView.setQuery(cursor.getString(cursor.getColumnIndexOrThrow(SearchManager.SUGGEST_COLUMN_TEXT_1)), false);
+                return true;
             }
         });
     }
@@ -342,6 +351,46 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
         }
     }
 
+    /**
+     * Navigation View ItemClick Listener
+     *
+     * @param item navigation item
+     * @return boolean event
+     */
+    @SuppressWarnings("StatementWithEmptyBody")
+    @Override
+    public boolean onNavigationItemSelected(@NonNull MenuItem item) {
+        // Handle navigation view item clicks here.
+        int id = item.getItemId();
+
+        switch (id) {
+            case R.id.nav_camera:
+                Toast.makeText(this, "Camera", Toast.LENGTH_SHORT).show();
+                break;
+            case R.id.nav_gallery:
+                Snackbar snackbar = Snackbar
+                        .make(coordinatorLayout, "gallery", Snackbar.LENGTH_LONG);
+                snackbar.show();
+                break;
+            case R.id.nav_slideshow:
+                Toast.makeText(this, "slideshow", Toast.LENGTH_SHORT).show();
+                break;
+            case R.id.nav_manage:
+                Toast.makeText(this, "manage", Toast.LENGTH_SHORT).show();
+                break;
+            case R.id.nav_share:
+                Toast.makeText(this, "share", Toast.LENGTH_SHORT).show();
+                break;
+            case R.id.nav_send:
+                Toast.makeText(this, "send", Toast.LENGTH_SHORT).show();
+                break;
+            default:
+                break;
+        }
+        drawer.closeDrawer(GravityCompat.START);
+        return true;
+    }
+
 
     private class ActionModeCallback implements ActionMode.Callback {
         @Override
@@ -406,31 +455,40 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
 
     @Override
     public void onBackPressed() {
-        if (!searchView.isIconified()) {
-            searchView.setIconified(true);
-            return;
+        // if drawer navigation is open, close first
+        if (drawer.isDrawerOpen(GravityCompat.START)) {
+            drawer.closeDrawer(GravityCompat.START);
+        } else {
+            if (!searchView.isIconified()) {
+                searchView.setIconified(true);
+                return;
+            }
+            super.onBackPressed();
         }
-        super.onBackPressed();
     }
+
+    /**
+     * AsyncTask Class for SearchView Suggest List Data
+     */
     public class FetchSearchTermSuggestionsTask extends AsyncTask<String, Void, Cursor> {
 
-        private final String[] sAutocompleteColNames = new String[] {
+        private final String[] sAutocompleteColNames = new String[]{
                 BaseColumns._ID,
                 SearchManager.SUGGEST_COLUMN_TEXT_1
         };
 
         @Override
         protected Cursor doInBackground(String... strings) {
-
             MatrixCursor cursor = new MatrixCursor(sAutocompleteColNames);
 
             int index = 0;
             for (Message message : messages) {
-
-                Object[] row = new Object[] { index, message.getSubject()};
-                cursor.addRow(row);
-                Log.i("query", message.getSubject());
-                index++;
+                if (message.getSubject().toLowerCase().startsWith(strings[0].toLowerCase())) {
+                    Object[] row = new Object[]{index, message.getSubject()};
+                    cursor.addRow(row);
+                    Log.i("query", message.getSubject());
+                    index++;
+                }
             }
 
             return cursor;
@@ -442,4 +500,39 @@ public class MainActivity extends AppCompatActivity implements SwipeRefreshLayou
         }
     }
 
+    @Override
+    protected void onNewIntent(Intent intent) {
+        if (Intent.ACTION_SEARCH.equals(intent.getAction())) {
+//            String query = intent.getStringExtra(SearchManager.QUERY);
+            if (searchView != null)
+                searchView.clearFocus();
+        }
+    }
+
+    public class AutoCompleteAdapter extends CursorAdapter {
+
+        private Context mContext;
+        private Cursor cr;
+
+        public AutoCompleteAdapter(Context context, Cursor c) {
+            super(context, c, 0);
+            this.mContext = context;
+            this.cr = c;
+        }
+
+        @Override
+        public View newView(Context context, Cursor cursor, ViewGroup parent) {
+            return LayoutInflater.from(mContext).inflate(R.layout.dropdown_item, parent, false);
+        }
+
+        @Override
+        public void bindView(View view, Context context, Cursor cursor) {
+
+            TextView tvQuery = (TextView) view.findViewById(R.id.suggest);
+
+            Log.i("tag", "getColumn : " + cursor.getColumnIndexOrThrow(SearchManager.SUGGEST_COLUMN_TEXT_1));
+            Log.i("tag", "result : " + cursor.getString(cursor.getColumnIndexOrThrow(SearchManager.SUGGEST_COLUMN_TEXT_1)));
+            tvQuery.setText(cursor.getString(cursor.getColumnIndexOrThrow(SearchManager.SUGGEST_COLUMN_TEXT_1)));
+        }
+    }
 }
